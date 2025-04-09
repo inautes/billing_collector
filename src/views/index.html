@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settlement Crawler Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 2rem;
+        }
+        .site-card {
+            margin-bottom: 1rem;
+        }
+        .status-badge {
+            margin-left: 0.5rem;
+        }
+        .result-item {
+            margin-bottom: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Settlement Crawler Admin</h1>
+        
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Crawler Status</h5>
+                        <button id="refreshStatus" class="btn btn-sm btn-outline-secondary">Refresh</button>
+                    </div>
+                    <div class="card-body">
+                        <div id="statusContainer">
+                            <p>Loading status...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Actions</h5>
+                    </div>
+                    <div class="card-body">
+                        <button id="runAllCrawlers" class="btn btn-primary me-2">Run All Crawlers</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Sites</h5>
+                        <button id="addSiteBtn" class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#addSiteModal">Add Site</button>
+                    </div>
+                    <div class="card-body">
+                        <div id="sitesContainer">
+                            <p>Loading sites...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Add Site Modal -->
+    <div class="modal fade" id="addSiteModal" tabindex="-1" aria-labelledby="addSiteModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addSiteModalLabel">Add New Site</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addSiteForm">
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="name" class="form-label">Site Name</label>
+                                <input type="text" class="form-control" id="name" name="name" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="url" class="form-label">URL</label>
+                                <input type="url" class="form-control" id="url" name="url" required>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="username" class="form-label">Username</label>
+                                <input type="text" class="form-control" id="username" name="username" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="password" class="form-label">Password</label>
+                                <input type="password" class="form-control" id="password" name="password" required>
+                            </div>
+                        </div>
+                        <h6 class="mt-4 mb-3">Selectors</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="loginSelector" class="form-label">Login Form Selector</label>
+                                <input type="text" class="form-control" id="loginSelector" name="loginSelector">
+                            </div>
+                            <div class="col-md-6">
+                                <label for="usernameSelector" class="form-label">Username Field Selector</label>
+                                <input type="text" class="form-control" id="usernameSelector" name="usernameSelector" required>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="passwordSelector" class="form-label">Password Field Selector</label>
+                                <input type="text" class="form-control" id="passwordSelector" name="passwordSelector" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="submitSelector" class="form-label">Submit Button Selector</label>
+                                <input type="text" class="form-control" id="submitSelector" name="submitSelector" required>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="settlementMenuSelector" class="form-label">Settlement Menu Selector</label>
+                                <input type="text" class="form-control" id="settlementMenuSelector" name="settlementMenuSelector" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="datePickerSelector" class="form-label">Date Picker Selector</label>
+                                <input type="text" class="form-control" id="datePickerSelector" name="datePickerSelector" required>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="searchButtonSelector" class="form-label">Search Button Selector</label>
+                                <input type="text" class="form-control" id="searchButtonSelector" name="searchButtonSelector" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label for="tableSelector" class="form-label">Table Selector</label>
+                                <input type="text" class="form-control" id="tableSelector" name="tableSelector" required>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="paginationSelector" class="form-label">Pagination Selector</label>
+                                <input type="text" class="form-control" id="paginationSelector" name="paginationSelector">
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-check mt-4">
+                                    <input class="form-check-input" type="checkbox" id="active" name="active" checked>
+                                    <label class="form-check-label" for="active">
+                                        Active
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveSiteBtn">Save Site</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load sites
+            loadSites();
+            
+            // Load status
+            loadStatus();
+            
+            // Event listeners
+            document.getElementById('refreshStatus').addEventListener('click', loadStatus);
+            document.getElementById('runAllCrawlers').addEventListener('click', runAllCrawlers);
+            document.getElementById('saveSiteBtn').addEventListener('click', saveSite);
+            
+            // Set up event delegation for site-specific actions
+            document.getElementById('sitesContainer').addEventListener('click', function(e) {
+                if (e.target.classList.contains('run-crawler-btn')) {
+                    const siteId = e.target.dataset.siteId;
+                    runCrawlerForSite(siteId);
+                } else if (e.target.classList.contains('edit-site-btn')) {
+                    const siteId = e.target.dataset.siteId;
+                    // TODO: Implement edit functionality
+                    alert('Edit functionality not implemented yet');
+                } else if (e.target.classList.contains('delete-site-btn')) {
+                    const siteId = e.target.dataset.siteId;
+                    deleteSite(siteId);
+                }
+            });
+        });
+        
+        // Load sites
+        function loadSites() {
+            fetch('/api/sites')
+                .then(response => response.json())
+                .then(sites => {
+                    const sitesContainer = document.getElementById('sitesContainer');
+                    
+                    if (sites.length === 0) {
+                        sitesContainer.innerHTML = '<p>No sites found. Add a site to get started.</p>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    sites.forEach(site => {
+                        html += `
+                            <div class="card site-card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <h5 class="mb-0">${site.name}</h5>
+                                    <div>
+                                        <span class="badge ${site.active ? 'bg-success' : 'bg-secondary'} status-badge">
+                                            ${site.active ? 'Active' : 'Inactive'}
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <p><strong>URL:</strong> ${site.url}</p>
+                                    <p><strong>Username:</strong> ${site.username}</p>
+                                    <div class="d-flex justify-content-end">
+                                        <button class="btn btn-sm btn-primary run-crawler-btn me-2" data-site-id="${site.id}">
+                                            Run Crawler
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary edit-site-btn me-2" data-site-id="${site.id}">
+                                            Edit
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-danger delete-site-btn" data-site-id="${site.id}">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    sitesContainer.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error loading sites:', error);
+                    document.getElementById('sitesContainer').innerHTML = '<p class="text-danger">Error loading sites. Please try again.</p>';
+                });
+        }
+        
+        // Load status
+        function loadStatus() {
+            fetch('/api/crawler/status')
+                .then(response => response.json())
+                .then(status => {
+                    const statusContainer = document.getElementById('statusContainer');
+                    
+                    let html = `
+                        <p><strong>Running:</strong> ${status.running ? 'Yes' : 'No'}</p>
+                        <p><strong>Last Run:</strong> ${status.lastRun ? new Date(status.lastRun).toLocaleString() : 'Never'}</p>
+                        <p><strong>Current Site:</strong> ${status.currentSite || 'None'}</p>
+                    `;
+                    
+                    if (status.results && status.results.length > 0) {
+                        html += '<h6 class="mt-3">Results:</h6><ul>';
+                        status.results.forEach(result => {
+                            html += `
+                                <li class="result-item">
+                                    <strong>${result.site}:</strong> 
+                                    <span class="${result.success ? 'text-success' : 'text-danger'}">
+                                        ${result.success ? 'Success' : 'Failed'}
+                                    </span>
+                                    ${result.count ? ` (${result.count} items)` : ''}
+                                    <br>
+                                    <small>${result.message}</small>
+                                </li>
+                            `;
+                        });
+                        html += '</ul>';
+                    }
+                    
+                    statusContainer.innerHTML = html;
+                })
+                .catch(error => {
+                    console.error('Error loading status:', error);
+                    document.getElementById('statusContainer').innerHTML = '<p class="text-danger">Error loading status. Please try again.</p>';
+                });
+        }
+        
+        // Run all crawlers
+        function runAllCrawlers() {
+            if (!confirm('Are you sure you want to run all crawlers? This may take some time.')) {
+                return;
+            }
+            
+            fetch('/api/crawler/run-all', {
+                method: 'POST'
+            })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    loadStatus();
+                })
+                .catch(error => {
+                    console.error('Error running crawlers:', error);
+                    alert('Error running crawlers. Please try again.');
+                });
+        }
+        
+        // Run crawler for specific site
+        function runCrawlerForSite(siteId) {
+            fetch(`/api/crawler/run/${siteId}`, {
+                method: 'POST'
+            })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    loadStatus();
+                })
+                .catch(error => {
+                    console.error('Error running crawler:', error);
+                    alert('Error running crawler. Please try again.');
+                });
+        }
+        
+        // Save site
+        function saveSite() {
+            const form = document.getElementById('addSiteForm');
+            const formData = new FormData(form);
+            
+            const site = {
+                name: formData.get('name'),
+                url: formData.get('url'),
+                username: formData.get('username'),
+                password: formData.get('password'),
+                loginSelector: formData.get('loginSelector'),
+                usernameSelector: formData.get('usernameSelector'),
+                passwordSelector: formData.get('passwordSelector'),
+                submitSelector: formData.get('submitSelector'),
+                settlementMenuSelector: formData.get('settlementMenuSelector'),
+                datePickerSelector: formData.get('datePickerSelector'),
+                searchButtonSelector: formData.get('searchButtonSelector'),
+                tableSelector: formData.get('tableSelector'),
+                paginationSelector: formData.get('paginationSelector'),
+                active: formData.get('active') === 'on'
+            };
+            
+            fetch('/api/sites', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(site)
+            })
+                .then(response => response.json())
+                .then(data => {
+                    alert('Site added successfully');
+                    form.reset();
+                    
+                    // Close modal
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('addSiteModal'));
+                    modal.hide();
+                    
+                    // Reload sites
+                    loadSites();
+                })
+                .catch(error => {
+                    console.error('Error adding site:', error);
+                    alert('Error adding site. Please try again.');
+                });
+        }
+        
+        // Delete site
+        function deleteSite(siteId) {
+            if (!confirm('Are you sure you want to delete this site?')) {
+                return;
+            }
+            
+            fetch(`/api/sites/${siteId}`, {
+                method: 'DELETE'
+            })
+                .then(response => response.json())
+                .then(data => {
+                    alert(data.message);
+                    loadSites();
+                })
+                .catch(error => {
+                    console.error('Error deleting site:', error);
+                    alert('Error deleting site. Please try again.');
+                });
+        }
+    </script>
+</body>
+</html>
