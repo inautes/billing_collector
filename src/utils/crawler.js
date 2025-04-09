@@ -369,17 +369,45 @@ class BaseCrawler {
         await new Promise(resolve => setTimeout(resolve, 3000));
         
         try {
-          await this.page.waitForSelector(this.site.tableSelector, { timeout: 10000 });
+          await this.page.waitForSelector(this.site.tableSelector, { timeout: 15000 });
           addLog(`Found results table with selector: ${this.site.tableSelector}`, 'success');
         } catch (tableError) {
           addLog(`Table not found with selector ${this.site.tableSelector}: ${tableError.message}`, 'warning');
           
+          await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_before_table_search.png` });
+          
           const tables = await this.page.$$('table');
           if (tables.length > 0) {
             addLog(`Found ${tables.length} tables on page, using first one`, 'info');
+            
+            const tableHtml = await this.page.evaluate(table => table.outerHTML, tables[0]);
+            addLog(`First table HTML: ${tableHtml.substring(0, 200)}...`, 'debug');
           } else {
-            addLog(`No tables found on page`, 'error');
-            throw new Error('No results table found');
+            const alternativeSelectors = [
+              'div.board_list', 'div.tbl_wrap', 'div.data-grid', 
+              'div.list_table', 'div[class*="table"]', 'div[class*="list"]',
+              'div[class*="grid"]', 'div[class*="board"]'
+            ];
+            
+            let found = false;
+            for (const selector of alternativeSelectors) {
+              const elements = await this.page.$$(selector);
+              if (elements.length > 0) {
+                addLog(`Found alternative table-like element with selector: ${selector}`, 'info');
+                found = true;
+                break;
+              }
+            }
+            
+            if (!found) {
+              const pageHtml = await this.page.content();
+              addLog(`Page HTML length: ${pageHtml.length} characters`, 'debug');
+              
+              await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_no_tables_found.png` });
+              
+              addLog(`No tables or table-like elements found on page`, 'error');
+              throw new Error('No results table found');
+            }
           }
         }
         
@@ -402,7 +430,36 @@ class BaseCrawler {
    */
   async extractTableData() {
     try {
-      await this.page.waitForSelector(this.site.tableSelector);
+      try {
+        await this.page.waitForSelector(this.site.tableSelector, { timeout: 15000 });
+        addLog(`Found results table with selector: ${this.site.tableSelector}`, 'success');
+      } catch (tableError) {
+        addLog(`Table not found with primary selector ${this.site.tableSelector}: ${tableError.message}`, 'warning');
+        
+        const tables = await this.page.$$('table');
+        if (tables.length > 0) {
+          addLog(`Found ${tables.length} tables on page, using first one`, 'info');
+          
+          await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_tables_found.png` });
+          
+          const tableHtml = await this.page.evaluate(table => table.outerHTML, tables[0]);
+          addLog(`First table HTML: ${tableHtml.substring(0, 200)}...`, 'debug');
+        } else {
+          const divTables = await this.page.$$('div[class*="table"], div[class*="grid"], div[class*="list"]');
+          if (divTables.length > 0) {
+            addLog(`Found ${divTables.length} div-based tables on page, using first one`, 'info');
+          } else {
+            addLog(`No tables or table-like elements found on page`, 'error');
+            
+            await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_no_tables_found.png` });
+            
+            const pageHtml = await this.page.content();
+            addLog(`Page HTML length: ${pageHtml.length} characters`, 'debug');
+            
+            throw new Error('No results table found');
+          }
+        }
+      }
       
       const data = await this.extractCurrentPageData();
       let allData = [...data];
@@ -410,44 +467,148 @@ class BaseCrawler {
       const hasPagination = await this.page.$(this.site.paginationSelector) !== null;
       
       if (hasPagination) {
+        addLog(`Found pagination with selector: ${this.site.paginationSelector}`, 'info');
         const totalPages = await this.getTotalPages();
+        addLog(`Total pages found: ${totalPages}`, 'info');
         
         for (let i = 2; i <= totalPages; i++) {
+          addLog(`Navigating to page ${i} of ${totalPages}`, 'info');
           await this.goToPage(i);
           const pageData = await this.extractCurrentPageData();
+          addLog(`Extracted ${pageData.length} records from page ${i}`, 'success');
           allData = [...allData, ...pageData];
         }
+      } else {
+        addLog(`No pagination found with selector: ${this.site.paginationSelector}`, 'info');
       }
       
+      addLog(`Total records extracted: ${allData.length}`, 'success');
       return allData;
     } catch (error) {
-      console.error(`Failed to extract table data for ${this.site.name}:`, error);
+      addLog(`Failed to extract table data for ${this.site.name}: ${error.message}`, 'error');
       return [];
     }
   }
 
   /**
    * Extract data from current page
-   * This method should be implemented by site-specific crawlers
+   * This method provides a default implementation that can be overridden by site-specific crawlers
    */
   async extractCurrentPageData() {
-    throw new Error('Method not implemented');
+    try {
+      const tables = await this.page.$$('table');
+      
+      if (tables.length === 0) {
+        addLog('No tables found on page for data extraction', 'warning');
+        return [];
+      }
+      
+      const tableIndex = 0;
+      
+      const data = await this.page.evaluate((tableIndex) => {
+        const table = document.querySelectorAll('table')[tableIndex];
+        if (!table) return [];
+        
+        const rows = Array.from(table.querySelectorAll('tr'));
+        if (rows.length <= 1) return []; // Only header row or empty table
+        
+        const headerRow = rows[0];
+        const headers = Array.from(headerRow.querySelectorAll('th, td')).map(cell => cell.textContent.trim());
+        
+        const dataRows = rows.slice(1); // Skip header row
+        
+        return dataRows.map(row => {
+          const cells = Array.from(row.querySelectorAll('td'));
+          const rowData = cells.map(cell => cell.textContent.trim());
+          
+          if (headers.length > 0 && headers.length === rowData.length) {
+            return headers.reduce((obj, header, index) => {
+              obj[header] = rowData[index];
+              return obj;
+            }, {});
+          }
+          
+          return rowData;
+        });
+      }, tableIndex);
+      
+      addLog(`Extracted ${data.length} rows of data from table`, 'success');
+      return data;
+    } catch (error) {
+      addLog(`Error extracting data from current page: ${error.message}`, 'error');
+      return [];
+    }
   }
 
   /**
    * Get total number of pages
-   * This method should be implemented by site-specific crawlers
+   * This method provides a default implementation that can be overridden by site-specific crawlers
    */
   async getTotalPages() {
-    throw new Error('Method not implemented');
+    try {
+      if (!this.site.paginationSelector) return 1;
+      
+      const paginationElement = await this.page.$(this.site.paginationSelector);
+      if (!paginationElement) return 1;
+      
+      const totalPages = await this.page.evaluate((selector) => {
+        const pagination = document.querySelector(selector);
+        if (!pagination) return 1;
+        
+        const pageLinks = Array.from(pagination.querySelectorAll('a')).filter(a => {
+          const text = a.textContent.trim();
+          return /^\d+$/.test(text); // Only links with numeric text
+        });
+        
+        if (pageLinks.length === 0) return 1;
+        
+        const pageNumbers = pageLinks.map(a => parseInt(a.textContent.trim(), 10));
+        return Math.max(...pageNumbers);
+      }, this.site.paginationSelector);
+      
+      return totalPages || 1;
+    } catch (error) {
+      addLog(`Error getting total pages: ${error.message}`, 'warning');
+      return 1; // Default to 1 page on error
+    }
   }
 
   /**
    * Go to specific page
-   * This method should be implemented by site-specific crawlers
+   * This method provides a default implementation that can be overridden by site-specific crawlers
    */
   async goToPage(pageNumber) {
-    throw new Error('Method not implemented');
+    try {
+      if (!this.site.paginationSelector) return false;
+      
+      const clicked = await this.page.evaluate((pageNumber, selector) => {
+        const pagination = document.querySelector(selector);
+        if (!pagination) return false;
+        
+        const pageLink = Array.from(pagination.querySelectorAll('a')).find(a => {
+          return a.textContent.trim() === pageNumber.toString();
+        });
+        
+        if (pageLink) {
+          pageLink.click();
+          return true;
+        }
+        
+        return false;
+      }, pageNumber, this.site.paginationSelector);
+      
+      if (clicked) {
+        addLog(`Clicked on page ${pageNumber} link`, 'success');
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for page to load
+        return true;
+      }
+      
+      addLog(`Could not find link for page ${pageNumber}`, 'warning');
+      return false;
+    } catch (error) {
+      addLog(`Error navigating to page ${pageNumber}: ${error.message}`, 'error');
+      return false;
+    }
   }
 
   /**
