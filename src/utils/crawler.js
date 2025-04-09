@@ -1,5 +1,26 @@
 import puppeteer from 'puppeteer';
 
+export const crawlerLogs = [];
+
+/**
+ * Add log entry
+ */
+export const addLog = (message, type = 'info') => {
+  const logEntry = {
+    timestamp: new Date(),
+    message,
+    type
+  };
+  console.log(`[${type.toUpperCase()}] ${message}`);
+  crawlerLogs.push(logEntry);
+  
+  if (crawlerLogs.length > 100) {
+    crawlerLogs.shift();
+  }
+  
+  return logEntry;
+};
+
 /**
  * Base crawler class with common functionality
  */
@@ -50,28 +71,98 @@ class BaseCrawler {
    */
   async login() {
     try {
+      addLog(`Navigating to ${this.site.url} for ${this.site.name}`, 'info');
       await this.navigateTo(this.site.url);
       
-      await this.page.waitForSelector(this.site.usernameSelector);
-      await this.page.waitForSelector(this.site.passwordSelector);
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_login_page.png` });
+      addLog(`Login page loaded for ${this.site.name}`, 'info');
       
-      await this.page.type(this.site.usernameSelector, this.site.username);
-      await this.page.type(this.site.passwordSelector, this.site.password);
+      addLog(`Waiting for login form elements for ${this.site.name}`, 'info');
       
-      await this.page.click(this.site.submitSelector);
+      const pageContent = await this.page.content();
+      addLog(`Page title: ${await this.page.title()}`, 'debug');
       
-      await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+      try {
+        if (this.site.loginSelector) {
+          await this.page.waitForSelector(this.site.loginSelector, { timeout: 5000 });
+          addLog(`Found login form for ${this.site.name}`, 'info');
+        }
+      } catch (error) {
+        addLog(`Login form not found for ${this.site.name}, will try to find input fields directly`, 'warning');
+      }
+      
+      try {
+        addLog(`Looking for username field: ${this.site.usernameSelector}`, 'info');
+        await this.page.waitForSelector(this.site.usernameSelector, { timeout: 10000 });
+        addLog(`Found username field for ${this.site.name}`, 'info');
+      } catch (error) {
+        addLog(`Username field not found with selector ${this.site.usernameSelector}`, 'error');
+        const inputFields = await this.page.$$('input[type="text"], input:not([type]), input[type="email"]');
+        addLog(`Found ${inputFields.length} potential username fields`, 'debug');
+        if (inputFields.length > 0) {
+          addLog(`Using first text input as username field`, 'warning');
+          await inputFields[0].type(this.site.username);
+        } else {
+          throw new Error(`Cannot find any username input fields`);
+        }
+      }
+      
+      try {
+        addLog(`Looking for password field: ${this.site.passwordSelector}`, 'info');
+        await this.page.waitForSelector(this.site.passwordSelector, { timeout: 10000 });
+        addLog(`Found password field for ${this.site.name}`, 'info');
+      } catch (error) {
+        addLog(`Password field not found with selector ${this.site.passwordSelector}`, 'error');
+        const passwordFields = await this.page.$$('input[type="password"]');
+        addLog(`Found ${passwordFields.length} potential password fields`, 'debug');
+        if (passwordFields.length > 0) {
+          addLog(`Using first password input field`, 'warning');
+          await passwordFields[0].type(this.site.password);
+        } else {
+          throw new Error(`Cannot find any password input fields`);
+        }
+      }
+      
+      try {
+        await this.page.type(this.site.usernameSelector, this.site.username);
+        await this.page.type(this.site.passwordSelector, this.site.password);
+        addLog(`Entered credentials for ${this.site.name}`, 'info');
+      } catch (error) {
+        addLog(`Error typing credentials: ${error.message}`, 'error');
+      }
+      
+      try {
+        addLog(`Looking for submit button: ${this.site.submitSelector}`, 'info');
+        await this.page.waitForSelector(this.site.submitSelector, { timeout: 10000 });
+        await this.page.click(this.site.submitSelector);
+        addLog(`Clicked submit button for ${this.site.name}`, 'info');
+      } catch (error) {
+        addLog(`Submit button not found with selector ${this.site.submitSelector}`, 'error');
+        const buttons = await this.page.$$('button[type="submit"], input[type="submit"], button:not([type]), .login-button, .btn-login');
+        addLog(`Found ${buttons.length} potential submit buttons`, 'debug');
+        if (buttons.length > 0) {
+          addLog(`Using first submit button`, 'warning');
+          await buttons[0].click();
+        } else {
+          throw new Error(`Cannot find any submit buttons`);
+        }
+      }
+      
+      addLog(`Waiting for navigation after login for ${this.site.name}`, 'info');
+      await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+      
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_after_login.png` });
       
       const url = this.page.url();
       if (url.includes('login') || url.includes('signin')) {
-        console.error(`Login failed for ${this.site.name}`);
+        addLog(`Login failed for ${this.site.name} - still on login page`, 'error');
         return false;
       }
       
-      console.log(`Successfully logged in to ${this.site.name}`);
+      addLog(`Successfully logged in to ${this.site.name}`, 'success');
       return true;
     } catch (error) {
-      console.error(`Login failed for ${this.site.name}:`, error);
+      addLog(`Login failed for ${this.site.name}: ${error.message}`, 'error');
       return false;
     }
   }
@@ -180,34 +271,41 @@ class BaseCrawler {
    */
   async run() {
     try {
+      addLog(`Starting crawler for ${this.site.name}`, 'info');
       await this.initialize();
       
+      addLog(`Initialized browser for ${this.site.name}`, 'info');
       const loginSuccess = await this.login();
       if (!loginSuccess) {
         throw new Error(`Failed to login to ${this.site.name}`);
       }
       
+      addLog(`Navigating to settlement page for ${this.site.name}`, 'info');
       const navigateSuccess = await this.navigateToSettlementPage();
       if (!navigateSuccess) {
         throw new Error(`Failed to navigate to settlement page for ${this.site.name}`);
       }
       
+      addLog(`Setting date to yesterday and searching for ${this.site.name}`, 'info');
       const searchSuccess = await this.setDateToYesterdayAndSearch();
       if (!searchSuccess) {
         throw new Error(`Failed to set date and search for ${this.site.name}`);
       }
       
+      addLog(`Extracting table data for ${this.site.name}`, 'info');
       const data = await this.extractTableData();
+      addLog(`Extracted ${data.length} records for ${this.site.name}`, 'success');
       
       await this.close();
+      addLog(`Crawler completed successfully for ${this.site.name}`, 'success');
       
       return {
         success: true,
         data,
-        message: `Successfully crawled ${this.site.name}`
+        message: `Successfully crawled ${this.site.name} (${data.length} records)`
       };
     } catch (error) {
-      console.error(`Crawler failed for ${this.site.name}:`, error);
+      addLog(`Crawler failed for ${this.site.name}: ${error.message}`, 'error');
       
       if (this.browser) {
         await this.close();

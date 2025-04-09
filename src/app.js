@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import sequelize from './config/database.js';
 import siteRoutes from './routes/siteRoutes.js';
 import crawlerRoutes from './routes/crawlerRoutes.js';
+import logRoutes from './routes/logRoutes.js';
 import { seedSites } from './utils/seedData.js';
 import './models/Site.js';
 import './models/SettlementData.js';
@@ -26,9 +27,14 @@ app.use(express.static(path.join(__dirname, 'views')));
 
 app.use('/api/sites', siteRoutes);
 app.use('/api/crawler', crawlerRoutes);
+app.use('/api/logs', logRoutes);
 
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'views', 'index.html'));
+});
+
+app.get('/logs.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'logs.html'));
 });
 
 const startServer = async () => {
