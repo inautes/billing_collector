@@ -1332,8 +1332,23 @@ class BaseCrawler {
       }
       
       addLog(`Extracting table data for ${this.site.name}`, 'info');
-      this.currentFrame = null;
       const data = await this.extractTableData();
+      
+      if (data.length === 0) {
+        addLog(`No data records found for ${this.site.name}, creating placeholder record`, 'warning');
+        data.push({
+          contentId: 'no-data',
+          contentTitle: 'No data found',
+          contentType: 'placeholder',
+          views: 0,
+          revenue: 0,
+          rawData: JSON.stringify({
+            message: 'No data found but crawler completed successfully',
+            timestamp: new Date().toISOString()
+          })
+        });
+      }
+      
       addLog(`Extracted ${data.length} records for ${this.site.name}`, 'success');
       
       await this.close();
