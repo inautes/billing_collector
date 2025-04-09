@@ -16,7 +16,7 @@ export const seedSites = async () => {
 
     const sites = [
       {
-ㅣ         name: '파일썬 - JAYE',
+        name: '파일썬 - JAYE',
         url: 'https://copyright.filesun.com',
         username: 'jaye',
         password: 'jaye1234!',
