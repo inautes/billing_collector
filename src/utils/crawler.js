@@ -246,71 +246,151 @@ class BaseCrawler {
       }
       
       try {
-        await this.page.waitForSelector(this.site.searchButtonSelector, { timeout: 5000 });
-        addLog(`Found search button with selector: ${this.site.searchButtonSelector}`, 'info');
-        await this.page.click(this.site.searchButtonSelector);
-      } catch (searchError) {
-        addLog(`Search button not found with selector ${this.site.searchButtonSelector}: ${searchError.message}`, 'warning');
+        await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_before_search_button.png` });
         
-        const searchButtons = await this.page.evaluate(() => {
-          const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'));
-          return buttons
-            .filter(btn => {
-              const text = btn.textContent || btn.value || '';
-              return text.includes('검색') || text.includes('Search') || 
-                     btn.className.includes('search') || btn.id.includes('search');
-            })
-            .map((el, index) => ({ 
-              index,
-              text: el.textContent || el.value || '',
-              tagName: el.tagName.toLowerCase()
+        await this.page.waitForTimeout(3000);
+        
+        const pageHtml = await this.page.content();
+        addLog(`Page HTML length: ${pageHtml.length} characters`, 'debug');
+        
+        try {
+          await this.page.waitForSelector(this.site.searchButtonSelector, { timeout: 5000 });
+          addLog(`Found search button with selector: ${this.site.searchButtonSelector}`, 'info');
+          await this.page.click(this.site.searchButtonSelector);
+          addLog(`Clicked search button with selector: ${this.site.searchButtonSelector}`, 'success');
+        } catch (selectorError) {
+          addLog(`Search button not found with selector ${this.site.searchButtonSelector}: ${selectorError.message}`, 'warning');
+          
+          const searchElements = await this.page.evaluate(() => {
+            const elements = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"], input[type="image"], a, div, span'));
+            
+            const allElements = elements.map((el, idx) => ({
+              index: idx,
+              tagName: el.tagName.toLowerCase(),
+              type: el.getAttribute('type') || '',
+              id: el.id || '',
+              className: el.className || '',
+              text: (el.textContent || el.value || '').trim(),
+              value: el.value || '',
+              onClick: el.hasAttribute('onclick') ? 'yes' : 'no',
+              href: el.getAttribute('href') || ''
             }));
-        });
-        
-        addLog(`Found ${searchButtons.length} potential search buttons`, 'debug');
-        
-        if (searchButtons.length > 0) {
-          addLog(`Using search button with text: ${searchButtons[0].text}`, 'info');
+            
+            const searchElements = elements.filter(el => {
+              const text = (el.textContent || el.value || '').trim().toLowerCase();
+              const id = (el.id || '').toLowerCase();
+              const className = (el.className || '').toLowerCase();
+              const type = (el.getAttribute('type') || '').toLowerCase();
+              const name = (el.getAttribute('name') || '').toLowerCase();
+              
+              return text.includes('검색') || text.includes('search') || 
+                     id.includes('search') || id.includes('btn') || 
+                     className.includes('search') || className.includes('btn') ||
+                     name.includes('search') || name.includes('btn') ||
+                     (el.tagName.toLowerCase() === 'input' && type === 'image');
+            }).map((el, index) => ({ 
+              index,
+              tagName: el.tagName.toLowerCase(),
+              type: el.getAttribute('type') || '',
+              id: el.id || '',
+              className: el.className || '',
+              text: (el.textContent || el.value || '').trim(),
+              value: el.value || ''
+            }));
+            
+            return { searchElements, allElements };
+          });
           
-          if (searchButtons[0].tagName === 'input') {
-            await this.page.click(`input[type="button"]:nth-of-type(${searchButtons[0].index + 1}), input[type="submit"]:nth-of-type(${searchButtons[0].index + 1})`);
-          } else {
-            await this.page.click(`button:nth-of-type(${searchButtons[0].index + 1})`);
+          addLog(`Found ${searchElements.searchElements.length} potential search elements out of ${searchElements.allElements.length} total elements`, 'debug');
+          
+          if (searchElements.allElements.length > 0) {
+            addLog(`First 5 elements on page: ${JSON.stringify(searchElements.allElements.slice(0, 5))}`, 'debug');
           }
-        } else {
-          const allButtons = await this.page.$$('button, input[type="button"], input[type="submit"]');
           
-          if (allButtons.length > 0) {
-            addLog(`No search button found, trying first button on page`, 'warning');
-            await allButtons[0].click();
+          if (searchElements.searchElements.length > 0) {
+            const element = searchElements.searchElements[0];
+            addLog(`Attempting to click search element: ${JSON.stringify(element)}`, 'info');
+            
+            if (element.tagName === 'input' && element.type === 'image') {
+              await this.page.click(`input[type="image"]`);
+              addLog(`Clicked input[type="image"]`, 'success');
+            } else if (element.tagName === 'input') {
+              await this.page.click(`input[type="${element.type}"]`);
+              addLog(`Clicked input[type="${element.type}"]`, 'success');
+            } else {
+              await this.page.click(`${element.tagName}`);
+              addLog(`Clicked ${element.tagName} element`, 'success');
+            }
           } else {
-            addLog(`Could not find any buttons on page`, 'error');
-            throw new Error('No buttons found on page');
+            addLog(`No search elements found, trying to find any button-like element`, 'warning');
+            
+            const imageInputs = await this.page.$$('input[type="image"]');
+            if (imageInputs.length > 0) {
+              addLog(`Found ${imageInputs.length} input[type="image"] elements, clicking the first one`, 'info');
+              await imageInputs[0].click();
+              addLog(`Clicked input[type="image"]`, 'success');
+            } else {
+              const allButtons = await this.page.$$('button, input[type="button"], input[type="submit"]');
+              if (allButtons.length > 0) {
+                addLog(`Found ${allButtons.length} button elements, clicking the first one`, 'info');
+                await allButtons[0].click();
+                addLog(`Clicked button element`, 'success');
+              } else {
+                const clickResult = await this.page.evaluate(() => {
+                  const buttonTexts = ['검색', 'search', '조회', 'lookup', 'find', 'go'];
+                  for (const text of buttonTexts) {
+                    const elements = Array.from(document.querySelectorAll('*')).filter(el => 
+                      (el.textContent || '').toLowerCase().includes(text.toLowerCase()) ||
+                      (el.value || '').toLowerCase().includes(text.toLowerCase())
+                    );
+                    
+                    if (elements.length > 0) {
+                      elements[0].click();
+                      return { success: true, text: elements[0].textContent || elements[0].value };
+                    }
+                  }
+                  return { success: false };
+                });
+                
+                if (clickResult.success) {
+                  addLog(`Used JavaScript click on element with text: ${clickResult.text}`, 'success');
+                } else {
+                  addLog(`Could not find any clickable elements on page`, 'error');
+                  
+                  await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_no_buttons_found.png` });
+                  
+                  throw new Error('No buttons or clickable elements found on page');
+                }
+              }
+            }
           }
         }
-      }
-      
-      await this.page.waitForTimeout(3000);
-      
-      try {
-        await this.page.waitForSelector(this.site.tableSelector, { timeout: 10000 });
-        addLog(`Found results table with selector: ${this.site.tableSelector}`, 'success');
-      } catch (tableError) {
-        addLog(`Table not found with selector ${this.site.tableSelector}: ${tableError.message}`, 'warning');
         
-        const tables = await this.page.$$('table');
-        if (tables.length > 0) {
-          addLog(`Found ${tables.length} tables on page, using first one`, 'info');
-        } else {
-          addLog(`No tables found on page`, 'error');
-          throw new Error('No results table found');
+        await this.page.waitForTimeout(3000);
+        
+        try {
+          await this.page.waitForSelector(this.site.tableSelector, { timeout: 10000 });
+          addLog(`Found results table with selector: ${this.site.tableSelector}`, 'success');
+        } catch (tableError) {
+          addLog(`Table not found with selector ${this.site.tableSelector}: ${tableError.message}`, 'warning');
+          
+          const tables = await this.page.$$('table');
+          if (tables.length > 0) {
+            addLog(`Found ${tables.length} tables on page, using first one`, 'info');
+          } else {
+            addLog(`No tables found on page`, 'error');
+            throw new Error('No results table found');
+          }
         }
+        
+        await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_after_search.png` });
+        addLog(`Successfully set date and searched for ${this.site.name}`, 'success');
+        
+        return true;
+      } catch (error) {
+        addLog(`Error during search: ${error.message}`, 'error');
+        throw error;
       }
-      
-      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_after_search.png` });
-      addLog(`Successfully set date and searched for ${this.site.name}`, 'success');
-      
-      return true;
     } catch (error) {
       addLog(`Failed to set date and search for ${this.site.name}: ${error.message}`, 'error');
       return false;
