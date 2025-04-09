@@ -252,15 +252,41 @@ class BaseCrawler {
       } catch (searchError) {
         addLog(`Search button not found with selector ${this.site.searchButtonSelector}: ${searchError.message}`, 'warning');
         
-        const searchButtons = await this.page.$$('button[type="submit"], input[type="submit"], button:contains("검색"), button:contains("Search"), button.search-btn, button[class*="search"]');
+        const searchButtons = await this.page.evaluate(() => {
+          const buttons = Array.from(document.querySelectorAll('button, input[type="button"], input[type="submit"]'));
+          return buttons
+            .filter(btn => {
+              const text = btn.textContent || btn.value || '';
+              return text.includes('검색') || text.includes('Search') || 
+                     btn.className.includes('search') || btn.id.includes('search');
+            })
+            .map((el, index) => ({ 
+              index,
+              text: el.textContent || el.value || '',
+              tagName: el.tagName.toLowerCase()
+            }));
+        });
+        
         addLog(`Found ${searchButtons.length} potential search buttons`, 'debug');
         
         if (searchButtons.length > 0) {
-          addLog(`Using first search button found`, 'info');
-          await searchButtons[0].click();
+          addLog(`Using search button with text: ${searchButtons[0].text}`, 'info');
+          
+          if (searchButtons[0].tagName === 'input') {
+            await this.page.click(`input[type="button"]:nth-of-type(${searchButtons[0].index + 1}), input[type="submit"]:nth-of-type(${searchButtons[0].index + 1})`);
+          } else {
+            await this.page.click(`button:nth-of-type(${searchButtons[0].index + 1})`);
+          }
         } else {
-          addLog(`Could not find any search buttons`, 'error');
-          throw new Error('No search button found');
+          const allButtons = await this.page.$$('button, input[type="button"], input[type="submit"]');
+          
+          if (allButtons.length > 0) {
+            addLog(`No search button found, trying first button on page`, 'warning');
+            await allButtons[0].click();
+          } else {
+            addLog(`Could not find any buttons on page`, 'error');
+            throw new Error('No buttons found on page');
+          }
         }
       }
       
