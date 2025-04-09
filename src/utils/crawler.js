@@ -583,7 +583,40 @@ class BaseCrawler {
         return [];
       }
       
-      const tableIndex = 0;
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_table_data.png` });
+      
+      let tableIndex = 0;
+      
+      if (tables.length > 1) {
+        const tableSizes = await this.page.evaluate(() => {
+          return Array.from(document.querySelectorAll('table')).map((table, index) => {
+            const rows = table.querySelectorAll('tr').length;
+            const headers = Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td'))
+              .map(cell => cell.textContent.trim().toLowerCase());
+            
+            const hasRelevantHeaders = headers.some(header => 
+              header.includes('id') || 
+              header.includes('title') || 
+              header.includes('revenue') || 
+              header.includes('views') ||
+              header.includes('정산') ||
+              header.includes('수익') ||
+              header.includes('조회')
+            );
+            
+            return { index, rows, hasRelevantHeaders };
+          });
+        });
+        
+        const relevantTables = tableSizes.filter(t => t.hasRelevantHeaders);
+        if (relevantTables.length > 0) {
+          tableIndex = relevantTables.sort((a, b) => b.rows - a.rows)[0].index;
+          addLog(`Selected table ${tableIndex} with relevant headers and ${tableSizes[tableIndex].rows} rows`, 'info');
+        } else {
+          tableIndex = tableSizes.sort((a, b) => b.rows - a.rows)[0].index;
+          addLog(`Selected table ${tableIndex} with most rows (${tableSizes[tableIndex].rows})`, 'info');
+        }
+      }
       
       const data = await this.page.evaluate((tableIndex) => {
         const table = document.querySelectorAll('table')[tableIndex];
@@ -602,17 +635,73 @@ class BaseCrawler {
           const rowData = cells.map(cell => cell.textContent.trim());
           
           if (headers.length > 0 && headers.length === rowData.length) {
-            return headers.reduce((obj, header, index) => {
+            const rawData = headers.reduce((obj, header, index) => {
               obj[header] = rowData[index];
               return obj;
             }, {});
+            
+            const mappedData = {
+              rawData: rawData,
+              settlementDate: new Date().toISOString().split('T')[0] // Default to today
+            };
+            
+            headers.forEach((header, index) => {
+              const headerLower = header.toLowerCase();
+              const value = rowData[index];
+              
+              if (headerLower.includes('id') || headerLower.includes('번호') || headerLower.includes('코드')) {
+                mappedData.contentId = value;
+              }
+              
+              else if (headerLower.includes('title') || headerLower.includes('제목') || 
+                      headerLower.includes('name') || headerLower.includes('이름') ||
+                      headerLower.includes('콘텐츠')) {
+                mappedData.contentTitle = value;
+              }
+              
+              else if (headerLower.includes('type') || headerLower.includes('종류') || 
+                      headerLower.includes('category') || headerLower.includes('카테고리')) {
+                mappedData.contentType = value;
+              }
+              
+              else if (headerLower.includes('view') || headerLower.includes('조회') || 
+                      headerLower.includes('count') || headerLower.includes('횟수')) {
+                mappedData.views = parseInt(value.replace(/[^0-9]/g, '')) || 0;
+              }
+              
+              else if (headerLower.includes('revenue') || headerLower.includes('수익') || 
+                      headerLower.includes('amount') || headerLower.includes('금액') ||
+                      headerLower.includes('정산')) {
+                mappedData.revenue = parseFloat(value.replace(/[^0-9.]/g, '')) || 0;
+              }
+              
+              else if (headerLower.includes('date') || headerLower.includes('날짜')) {
+                try {
+                  const dateMatch = value.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}/);
+                  if (dateMatch) {
+                    mappedData.settlementDate = dateMatch[0].replace(/\//g, '-');
+                  }
+                } catch (e) {
+                }
+              }
+            });
+            
+            return mappedData;
           }
           
-          return rowData;
+          return { 
+            rawData: rowData,
+            settlementDate: new Date().toISOString().split('T')[0]
+          };
         });
       }, tableIndex);
       
       addLog(`Extracted ${data.length} rows of data from table`, 'success');
+      
+      if (data.length > 0) {
+        addLog(`Sample data: ${JSON.stringify(data[0]).substring(0, 200)}...`, 'debug');
+      }
+      
       return data;
     } catch (error) {
       addLog(`Error extracting data from current page: ${error.message}`, 'error');
