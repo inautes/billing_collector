@@ -248,7 +248,7 @@ class BaseCrawler {
       try {
         await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_before_search_button.png` });
         
-        await this.page.waitForTimeout(3000);
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
         const pageHtml = await this.page.content();
         addLog(`Page HTML length: ${pageHtml.length} characters`, 'debug');
@@ -366,7 +366,7 @@ class BaseCrawler {
           }
         }
         
-        await this.page.waitForTimeout(3000);
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
         try {
           await this.page.waitForSelector(this.site.tableSelector, { timeout: 10000 });
