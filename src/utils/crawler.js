@@ -77,76 +77,141 @@ class BaseCrawler {
       await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_login_page.png` });
       addLog(`Login page loaded for ${this.site.name}`, 'info');
       
-      addLog(`Waiting for login form elements for ${this.site.name}`, 'info');
+      const frames = this.page.frames();
+      addLog(`Found ${frames.length} frames on login page`, 'debug');
       
-      const pageContent = await this.page.content();
-      addLog(`Page title: ${await this.page.title()}`, 'debug');
+      let loginFrame = null;
+      let usernameElement = null;
+      let passwordElement = null;
+      let submitElement = null;
       
       try {
-        if (this.site.loginSelector) {
-          await this.page.waitForSelector(this.site.loginSelector, { timeout: 5000 });
-          addLog(`Found login form for ${this.site.name}`, 'info');
+        usernameElement = await this.page.$(this.site.usernameSelector);
+        if (usernameElement) {
+          addLog(`Found username field in main page for ${this.site.name}`, 'info');
+          loginFrame = this.page;
         }
       } catch (error) {
-        addLog(`Login form not found for ${this.site.name}, will try to find input fields directly`, 'warning');
+        addLog(`Username field not found in main page: ${error.message}`, 'debug');
       }
       
-      try {
-        addLog(`Looking for username field: ${this.site.usernameSelector}`, 'info');
-        await this.page.waitForSelector(this.site.usernameSelector, { timeout: 10000 });
-        addLog(`Found username field for ${this.site.name}`, 'info');
-      } catch (error) {
-        addLog(`Username field not found with selector ${this.site.usernameSelector}`, 'error');
-        const inputFields = await this.page.$$('input[type="text"], input:not([type]), input[type="email"]');
-        addLog(`Found ${inputFields.length} potential username fields`, 'debug');
-        if (inputFields.length > 0) {
-          addLog(`Using first text input as username field`, 'warning');
-          await inputFields[0].type(this.site.username);
-        } else {
-          throw new Error(`Cannot find any username input fields`);
-        }
-      }
-      
-      try {
-        addLog(`Looking for password field: ${this.site.passwordSelector}`, 'info');
-        await this.page.waitForSelector(this.site.passwordSelector, { timeout: 10000 });
-        addLog(`Found password field for ${this.site.name}`, 'info');
-      } catch (error) {
-        addLog(`Password field not found with selector ${this.site.passwordSelector}`, 'error');
-        const passwordFields = await this.page.$$('input[type="password"]');
-        addLog(`Found ${passwordFields.length} potential password fields`, 'debug');
-        if (passwordFields.length > 0) {
-          addLog(`Using first password input field`, 'warning');
-          await passwordFields[0].type(this.site.password);
-        } else {
-          throw new Error(`Cannot find any password input fields`);
+      if (!usernameElement) {
+        for (let i = 0; i < frames.length; i++) {
+          const frame = frames[i];
+          try {
+            const frameUrl = frame.url();
+            addLog(`Checking frame ${i} with URL: ${frameUrl}`, 'debug');
+            
+            const frameElement = await frame.$(this.site.usernameSelector);
+            if (frameElement) {
+              addLog(`Found username field in frame ${i} for ${this.site.name}`, 'info');
+              loginFrame = frame;
+              usernameElement = frameElement;
+              break;
+            }
+          } catch (error) {
+            addLog(`Error checking frame ${i}: ${error.message}`, 'debug');
+          }
         }
       }
       
-      try {
-        await this.page.type(this.site.usernameSelector, this.site.username);
-        await this.page.type(this.site.passwordSelector, this.site.password);
-        addLog(`Entered credentials for ${this.site.name}`, 'info');
-      } catch (error) {
-        addLog(`Error typing credentials: ${error.message}`, 'error');
+      if (!loginFrame) {
+        addLog(`Login form not found with specified selectors, trying alternatives`, 'warning');
+        const alternativeSelectors = [
+          'input[name="user_id"]',
+          'input[id="user_id"]',
+          'input[name="userid"]',
+          'input[id="userid"]',
+          'input[type="text"]'
+        ];
+        
+        for (const selector of alternativeSelectors) {
+          try {
+            const element = await this.page.$(selector);
+            if (element) {
+              addLog(`Found username field with alternative selector ${selector} in main page`, 'info');
+              loginFrame = this.page;
+              usernameElement = element;
+              break;
+            }
+          } catch (error) {
+          }
+        }
+        
+        if (!loginFrame) {
+          for (let i = 0; i < frames.length; i++) {
+            const frame = frames[i];
+            for (const selector of alternativeSelectors) {
+              try {
+                const element = await frame.$(selector);
+                if (element) {
+                  addLog(`Found username field with alternative selector ${selector} in frame ${i}`, 'info');
+                  loginFrame = frame;
+                  usernameElement = element;
+                  break;
+                }
+              } catch (error) {
+              }
+            }
+            if (loginFrame) break;
+          }
+        }
+      }
+      
+      if (!loginFrame) {
+        throw new Error(`Cannot find login form in any frame`);
       }
       
       try {
-        addLog(`Looking for submit button: ${this.site.submitSelector}`, 'info');
-        await this.page.waitForSelector(this.site.submitSelector, { timeout: 10000 });
-        await this.page.click(this.site.submitSelector);
-        addLog(`Clicked submit button for ${this.site.name}`, 'info');
-      } catch (error) {
-        addLog(`Submit button not found with selector ${this.site.submitSelector}`, 'error');
-        const buttons = await this.page.$$('button[type="submit"], input[type="submit"], button:not([type]), .login-button, .btn-login');
-        addLog(`Found ${buttons.length} potential submit buttons`, 'debug');
-        if (buttons.length > 0) {
-          addLog(`Using first submit button`, 'warning');
-          await buttons[0].click();
-        } else {
-          throw new Error(`Cannot find any submit buttons`);
+        passwordElement = await loginFrame.$(this.site.passwordSelector);
+        if (!passwordElement) {
+          const passwordSelectors = ['input[type="password"]'];
+          for (const selector of passwordSelectors) {
+            passwordElement = await loginFrame.$(selector);
+            if (passwordElement) {
+              addLog(`Found password field with alternative selector ${selector}`, 'info');
+              break;
+            }
+          }
         }
+        
+        if (!passwordElement) {
+          throw new Error(`Cannot find password field`);
+        }
+        
+        submitElement = await loginFrame.$(this.site.submitSelector);
+        if (!submitElement) {
+          const submitSelectors = [
+            'input[type="image"]',
+            'input[type="submit"]',
+            'button[type="submit"]',
+            'button:not([type])',
+            '.login-button',
+            '.btn-login'
+          ];
+          for (const selector of submitSelectors) {
+            submitElement = await loginFrame.$(selector);
+            if (submitElement) {
+              addLog(`Found submit button with alternative selector ${selector}`, 'info');
+              break;
+            }
+          }
+        }
+        
+        if (!submitElement) {
+          throw new Error(`Cannot find submit button`);
+        }
+      } catch (error) {
+        addLog(`Error finding login elements: ${error.message}`, 'error');
+        throw error;
       }
+      
+      await usernameElement.type(this.site.username);
+      await passwordElement.type(this.site.password);
+      addLog(`Entered credentials for ${this.site.name}`, 'info');
+      
+      await submitElement.click();
+      addLog(`Clicked submit button for ${this.site.name}`, 'info');
       
       addLog(`Waiting for navigation after login for ${this.site.name}`, 'info');
       await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
@@ -489,6 +554,16 @@ class BaseCrawler {
               const frameUrl = await frame.evaluate(() => window.location.href);
               addLog(`Frame ${i} URL: ${frameUrl}`, 'debug');
               
+              if (frameUrl.includes('googletagmanager.com')) {
+                addLog(`Skipping Google Tag Manager frame ${i}`, 'debug');
+                continue;
+              }
+              
+              if (frameUrl === 'about:blank') {
+                addLog(`Skipping empty frame ${i}`, 'debug');
+                continue;
+              }
+              
               const frameTables = await frame.evaluate(() => {
                 const tables = document.querySelectorAll('table');
                 return {
@@ -516,6 +591,56 @@ class BaseCrawler {
                 
                 this.currentFrame = frame;
                 break;
+              }
+              
+              const frameDivTables = await frame.evaluate(() => {
+                const divSelectors = [
+                  'div[class*="table"]', 'div[class*="grid"]', 'div[class*="list"]',
+                  'div.board_list', 'div.tbl_wrap', 'div.data-grid', 
+                  'div.list_table', 'div[class*="board"]'
+                ];
+                
+                let divTables = [];
+                for (const selector of divSelectors) {
+                  const elements = document.querySelectorAll(selector);
+                  if (elements.length > 0) {
+                    divTables = [...divTables, ...Array.from(elements)];
+                  }
+                }
+                
+                return {
+                  divTableCount: divTables.length,
+                  divTableDetails: divTables.map((t, i) => ({
+                    index: i,
+                    children: t.children.length,
+                    html: t.outerHTML.substring(0, 200)
+                  }))
+                };
+              });
+              
+              addLog(`Frame ${i} has ${frameDivTables.divTableCount} div-based tables`, 'info');
+              if (frameDivTables.divTableCount > 0) {
+                addLog(`Found div-based tables in iframe ${i}`, 'success');
+                this.currentFrame = frame;
+                break;
+              }
+              
+              const frameContent = await frame.evaluate(() => {
+                return {
+                  bodyText: document.body ? document.body.textContent.trim().length : 0,
+                  elements: document.querySelectorAll('*').length,
+                  hasNumbers: document.body ? /\d{3,}/.test(document.body.textContent) : false
+                };
+              });
+              
+              if (frameContent.bodyText > 500 && frameContent.elements > 50) {
+                addLog(`Frame ${i} has significant content (${frameContent.elements} elements, ${frameContent.bodyText} chars)`, 'info');
+                
+                if (frameContent.hasNumbers) {
+                  addLog(`Frame ${i} contains numeric data, likely settlement information`, 'success');
+                  this.currentFrame = frame;
+                  break;
+                }
               }
             } catch (frameError) {
               addLog(`Error accessing frame ${i}: ${frameError.message}`, 'warning');
@@ -616,9 +741,46 @@ class BaseCrawler {
       }
       
       if (!tableFound) {
+        const frames = this.page.frames();
+        addLog(`Checking ${frames.length} frames for tables`, 'info');
+        
+        for (let i = 0; i < frames.length; i++) {
+          const frame = frames[i];
+          try {
+            const frameUrl = frame.url();
+            addLog(`Checking frame ${i} with URL: ${frameUrl}`, 'debug');
+            
+            try {
+              const tableElement = await frame.$(this.site.tableSelector);
+              if (tableElement) {
+                addLog(`Found table with selector ${this.site.tableSelector} in frame ${i}`, 'success');
+                this.currentFrame = frame;
+                tableFound = true;
+                break;
+              }
+            } catch (error) {
+            }
+            
+            const tables = await frame.$$('table');
+            if (tables.length > 0) {
+              addLog(`Found ${tables.length} tables in frame ${i}`, 'success');
+              this.currentFrame = frame;
+              tableFound = true;
+              
+              const tableHtml = await frame.evaluate(table => table.outerHTML, tables[0]);
+              addLog(`First table HTML from frame: ${tableHtml.substring(0, 200)}...`, 'debug');
+              break;
+            }
+          } catch (frameError) {
+            addLog(`Error checking frame ${i}: ${frameError.message}`, 'debug');
+          }
+        }
+      }
+      
+      if (!tableFound) {
         const tables = await this.page.$$('table');
         if (tables.length > 0) {
-          addLog(`Found ${tables.length} tables on page, using first one`, 'info');
+          addLog(`Found ${tables.length} tables on main page, using first one`, 'info');
           
           await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_tables_found.png` });
           
@@ -788,7 +950,7 @@ class BaseCrawler {
         let tableIndex = 0;
         
         if (tables.length > 1) {
-          const tableSizes = await this.page.evaluate(() => {
+          const tableSizes = await context.evaluate(() => {
             return Array.from(document.querySelectorAll('table')).map((table, index) => {
               const rows = table.querySelectorAll('tr').length;
               const headers = Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td'))
@@ -822,7 +984,7 @@ class BaseCrawler {
           }
         }
         
-        const data = await this.page.evaluate((tableIndex) => {
+        const data = await context.evaluate((tableIndex) => {
           const table = document.querySelectorAll('table')[tableIndex];
           if (!table) return [];
           
