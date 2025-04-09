@@ -172,14 +172,24 @@ class BaseCrawler {
    */
   async navigateToSettlementPage() {
     try {
-      await this.page.waitForSelector(this.site.settlementMenuSelector);
-      await this.page.click(this.site.settlementMenuSelector);
+      addLog(`Attempting to navigate to settlement page for ${this.site.name}`, 'info');
       
-      await this.page.waitForNavigation({ waitUntil: 'networkidle2' });
+      try {
+        await this.page.waitForSelector(this.site.settlementMenuSelector, { timeout: 5000 });
+        addLog(`Found settlement menu for ${this.site.name}`, 'info');
+        await this.page.click(this.site.settlementMenuSelector);
+        await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 });
+      } catch (menuError) {
+        addLog(`Menu navigation failed: ${menuError.message}. Trying direct URL navigation.`, 'warning');
+        await this.page.goto('https://copyright.filesun.com/sales', { waitUntil: 'networkidle2' });
+      }
+      
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_settlement_page.png` });
+      addLog(`Successfully navigated to settlement page for ${this.site.name}`, 'success');
       
       return true;
     } catch (error) {
-      console.error(`Failed to navigate to settlement page for ${this.site.name}:`, error);
+      addLog(`Failed to navigate to settlement page for ${this.site.name}: ${error.message}`, 'error');
       return false;
     }
   }
