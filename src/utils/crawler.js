@@ -174,20 +174,100 @@ class BaseCrawler {
     try {
       addLog(`Attempting to navigate to settlement page for ${this.site.name}`, 'info');
       
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_before_navigation.png` });
+      
+      let navigationSuccess = false;
+      
       try {
         await this.page.waitForSelector(this.site.settlementMenuSelector, { timeout: 5000 });
         addLog(`Found settlement menu for ${this.site.name}`, 'info');
+        
+        const currentUrl = this.page.url();
+        addLog(`Current URL before navigation: ${currentUrl}`, 'debug');
+        
         await this.page.click(this.site.settlementMenuSelector);
-        await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 });
+        
+        try {
+          await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 });
+          navigationSuccess = true;
+          addLog(`Navigation completed after clicking menu`, 'success');
+        } catch (navError) {
+          addLog(`Navigation timeout after clicking menu: ${navError.message}`, 'warning');
+          
+          const newUrl = this.page.url();
+          if (newUrl !== currentUrl) {
+            navigationSuccess = true;
+            addLog(`URL changed to ${newUrl} despite navigation timeout`, 'info');
+          }
+        }
       } catch (menuError) {
-        addLog(`Menu navigation failed: ${menuError.message}. Trying direct URL navigation.`, 'warning');
-        await this.page.goto('https://copyright.filesun.com/sales', { waitUntil: 'networkidle2' });
+        addLog(`Menu navigation failed: ${menuError.message}`, 'warning');
+      }
+      
+      if (!navigationSuccess) {
+        addLog(`Trying direct URL navigation to settlement page`, 'info');
+        
+        const possibleUrls = [
+          'https://copyright.filesun.com/sales',
+          'https://copyright.filesun.com/settlement',
+          'https://copyright.filesun.com/copyright/sales',
+          'https://copyright.filesun.com/member/sales'
+        ];
+        
+        for (const url of possibleUrls) {
+          try {
+            addLog(`Trying direct navigation to: ${url}`, 'info');
+            await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
+            navigationSuccess = true;
+            addLog(`Successfully navigated directly to ${url}`, 'success');
+            break;
+          } catch (directNavError) {
+            addLog(`Direct navigation to ${url} failed: ${directNavError.message}`, 'warning');
+          }
+        }
+      }
+      
+      if (!navigationSuccess) {
+        addLog(`Looking for any settlement/sales related links`, 'info');
+        
+        const links = await this.page.evaluate(() => {
+          return Array.from(document.querySelectorAll('a')).map(a => ({
+            href: a.href,
+            text: a.textContent.trim(),
+            hasSettlementKeywords: a.href.includes('sales') || 
+                                  a.href.includes('settlement') || 
+                                  a.textContent.toLowerCase().includes('정산') ||
+                                  a.textContent.toLowerCase().includes('sales')
+          })).filter(link => link.hasSettlementKeywords);
+        });
+        
+        if (links.length > 0) {
+          addLog(`Found ${links.length} potential settlement links`, 'info');
+          
+          for (const link of links) {
+            addLog(`Trying to navigate to: ${link.href} (${link.text})`, 'info');
+            
+            try {
+              await this.page.goto(link.href, { waitUntil: 'networkidle2', timeout: 15000 });
+              navigationSuccess = true;
+              addLog(`Successfully navigated to ${link.href}`, 'success');
+              break;
+            } catch (linkNavError) {
+              addLog(`Navigation to ${link.href} failed: ${linkNavError.message}`, 'warning');
+            }
+          }
+        }
       }
       
       await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_settlement_page.png` });
-      addLog(`Successfully navigated to settlement page for ${this.site.name}`, 'success');
       
-      return true;
+      if (navigationSuccess) {
+        addLog(`Successfully navigated to settlement page for ${this.site.name}`, 'success');
+        return true;
+      } else {
+        addLog(`All navigation attempts failed for ${this.site.name}`, 'error');
+        return false;
+      }
     } catch (error) {
       addLog(`Failed to navigate to settlement page for ${this.site.name}: ${error.message}`, 'error');
       return false;
