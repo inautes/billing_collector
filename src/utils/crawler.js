@@ -199,26 +199,94 @@ class BaseCrawler {
    */
   async setDateToYesterdayAndSearch() {
     try {
+      addLog(`Looking for date inputs and search elements for ${this.site.name}`, 'info');
+      
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_before_date_search.png` });
+      
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const formattedDate = yesterday.toISOString().split('T')[0]; // YYYY-MM-DD format
+      const koreanFormattedDate = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
       
-      await this.page.waitForSelector(this.site.datePickerSelector);
+      addLog(`Setting date to yesterday: ${koreanFormattedDate}`, 'info');
       
-      await this.page.evaluate((selector) => {
-        document.querySelector(selector).value = '';
-      }, this.site.datePickerSelector);
+      const dateInputs = await this.page.$$('input[type="date"], input.date, input[name*="date"], input[id*="date"]');
+      addLog(`Found ${dateInputs.length} potential date inputs`, 'debug');
       
-      await this.page.type(this.site.datePickerSelector, formattedDate);
+      if (dateInputs.length > 0) {
+        try {
+          await this.page.waitForSelector(this.site.datePickerSelector, { timeout: 5000 });
+          addLog(`Found date picker with selector: ${this.site.datePickerSelector}`, 'info');
+          
+          await this.page.evaluate((selector) => {
+            document.querySelector(selector).value = '';
+          }, this.site.datePickerSelector);
+          
+          await this.page.type(this.site.datePickerSelector, koreanFormattedDate);
+        } catch (dateError) {
+          addLog(`Date picker not found with selector ${this.site.datePickerSelector}: ${dateError.message}`, 'warning');
+          addLog(`Using first date input found`, 'info');
+          
+          await dateInputs[0].evaluate(el => el.value = '');
+          await dateInputs[0].type(koreanFormattedDate);
+        }
+      } else {
+        addLog(`No date inputs found, looking for date select elements`, 'warning');
+        
+        const selects = await this.page.$$('select');
+        if (selects.length >= 3) {
+          addLog(`Found ${selects.length} select elements, trying to set date using selects`, 'info');
+          
+          await selects[0].select(yesterday.getFullYear().toString());
+          await selects[1].select((yesterday.getMonth() + 1).toString());
+          await selects[2].select(yesterday.getDate().toString());
+        } else {
+          addLog(`Could not find date input elements`, 'error');
+        }
+      }
       
-      await this.page.waitForSelector(this.site.searchButtonSelector);
-      await this.page.click(this.site.searchButtonSelector);
+      try {
+        await this.page.waitForSelector(this.site.searchButtonSelector, { timeout: 5000 });
+        addLog(`Found search button with selector: ${this.site.searchButtonSelector}`, 'info');
+        await this.page.click(this.site.searchButtonSelector);
+      } catch (searchError) {
+        addLog(`Search button not found with selector ${this.site.searchButtonSelector}: ${searchError.message}`, 'warning');
+        
+        const searchButtons = await this.page.$$('button[type="submit"], input[type="submit"], button:contains("검색"), button:contains("Search"), button.search-btn, button[class*="search"]');
+        addLog(`Found ${searchButtons.length} potential search buttons`, 'debug');
+        
+        if (searchButtons.length > 0) {
+          addLog(`Using first search button found`, 'info');
+          await searchButtons[0].click();
+        } else {
+          addLog(`Could not find any search buttons`, 'error');
+          throw new Error('No search button found');
+        }
+      }
       
-      await this.page.waitForSelector(this.site.tableSelector);
+      await this.page.waitForTimeout(3000);
+      
+      try {
+        await this.page.waitForSelector(this.site.tableSelector, { timeout: 10000 });
+        addLog(`Found results table with selector: ${this.site.tableSelector}`, 'success');
+      } catch (tableError) {
+        addLog(`Table not found with selector ${this.site.tableSelector}: ${tableError.message}`, 'warning');
+        
+        const tables = await this.page.$$('table');
+        if (tables.length > 0) {
+          addLog(`Found ${tables.length} tables on page, using first one`, 'info');
+        } else {
+          addLog(`No tables found on page`, 'error');
+          throw new Error('No results table found');
+        }
+      }
+      
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_after_search.png` });
+      addLog(`Successfully set date and searched for ${this.site.name}`, 'success');
       
       return true;
     } catch (error) {
-      console.error(`Failed to set date and search for ${this.site.name}:`, error);
+      addLog(`Failed to set date and search for ${this.site.name}: ${error.message}`, 'error');
       return false;
     }
   }
