@@ -446,7 +446,82 @@ class BaseCrawler {
           }
         }
         
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        addLog(`Waiting for page to load after clicking search button...`, 'info');
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        
+        await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_after_search_click.png` });
+        
+        const pageStructure = await this.page.evaluate(() => {
+          const tables = document.querySelectorAll('table');
+          const divTables = document.querySelectorAll('div[class*="table"], div[class*="grid"], div[class*="list"]');
+          const iframes = document.querySelectorAll('iframe');
+          
+          return {
+            url: window.location.href,
+            title: document.title,
+            tableCount: tables.length,
+            tableDetails: Array.from(tables).map((t, i) => ({
+              index: i,
+              rows: t.querySelectorAll('tr').length,
+              html: t.outerHTML.substring(0, 200)
+            })),
+            divTableCount: divTables.length,
+            iframeCount: iframes.length,
+            iframeDetails: Array.from(iframes).map(f => ({
+              src: f.src,
+              id: f.id,
+              name: f.name
+            }))
+          };
+        });
+        
+        addLog(`Page structure after search: ${JSON.stringify(pageStructure)}`, 'debug');
+        
+        if (pageStructure.iframeCount > 0) {
+          addLog(`Found ${pageStructure.iframeCount} iframes, attempting to access iframe content`, 'info');
+          
+          const frames = this.page.frames();
+          addLog(`Total frames found: ${frames.length}`, 'debug');
+          
+          for (let i = 0; i < frames.length; i++) {
+            const frame = frames[i];
+            try {
+              const frameUrl = await frame.evaluate(() => window.location.href);
+              addLog(`Frame ${i} URL: ${frameUrl}`, 'debug');
+              
+              const frameTables = await frame.evaluate(() => {
+                const tables = document.querySelectorAll('table');
+                return {
+                  tableCount: tables.length,
+                  tableDetails: Array.from(tables).map((t, i) => ({
+                    index: i,
+                    rows: t.querySelectorAll('tr').length,
+                    html: t.outerHTML.substring(0, 200)
+                  }))
+                };
+              });
+              
+              addLog(`Frame ${i} has ${frameTables.tableCount} tables`, 'info');
+              if (frameTables.tableCount > 0) {
+                addLog(`Found tables in iframe ${i}`, 'success');
+                
+                try {
+                  const frameElement = await this.page.$(`iframe:nth-of-type(${i + 1})`);
+                  if (frameElement) {
+                    await frameElement.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_iframe_${i}_content.png` });
+                  }
+                } catch (screenshotError) {
+                  addLog(`Could not take screenshot of iframe ${i}: ${screenshotError.message}`, 'warning');
+                }
+                
+                this.currentFrame = frame;
+                break;
+              }
+            } catch (frameError) {
+              addLog(`Error accessing frame ${i}: ${frameError.message}`, 'warning');
+            }
+          }
+        }
         
         try {
           await this.page.waitForSelector(this.site.tableSelector, { timeout: 15000 });
@@ -516,12 +591,28 @@ class BaseCrawler {
       addLog(`Page HTML length: ${pageHtml.length} characters`, 'debug');
       
       let tableFound = false;
-      try {
-        await this.page.waitForSelector(this.site.tableSelector, { timeout: 5000 });
-        addLog(`Found results table with selector: ${this.site.tableSelector}`, 'success');
-        tableFound = true;
-      } catch (tableError) {
-        addLog(`Table not found with primary selector ${this.site.tableSelector}: ${tableError.message}`, 'warning');
+      
+      if (this.currentFrame) {
+        addLog(`Using previously detected iframe for table extraction`, 'info');
+        try {
+          const frameTables = await this.currentFrame.$$('table');
+          if (frameTables.length > 0) {
+            addLog(`Found ${frameTables.length} tables in iframe`, 'success');
+            tableFound = true;
+          }
+        } catch (frameError) {
+          addLog(`Error accessing tables in iframe: ${frameError.message}`, 'warning');
+        }
+      }
+      
+      if (!tableFound) {
+        try {
+          await this.page.waitForSelector(this.site.tableSelector, { timeout: 5000 });
+          addLog(`Found results table with selector: ${this.site.tableSelector}`, 'success');
+          tableFound = true;
+        } catch (tableError) {
+          addLog(`Table not found with primary selector ${this.site.tableSelector}: ${tableError.message}`, 'warning');
+        }
       }
       
       if (!tableFound) {
@@ -686,7 +777,10 @@ class BaseCrawler {
     try {
       await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_before_data_extraction.png` });
       
-      const tables = await this.page.$$('table');
+      const context = this.currentFrame || this.page;
+      addLog(`Using ${this.currentFrame ? 'iframe' : 'main page'} context for data extraction`, 'info');
+      
+      const tables = await context.$$('table');
       
       if (tables.length > 0) {
         addLog(`Found ${tables.length} standard HTML tables for data extraction`, 'info');
@@ -813,12 +907,12 @@ class BaseCrawler {
         }
       }
       
-      const divTables = await this.page.$$('div[class*="table"], div[class*="grid"], div[class*="list"], div.board_list, div.tbl_wrap');
+      const divTables = await context.$$('div[class*="table"], div[class*="grid"], div[class*="list"], div.board_list, div.tbl_wrap');
       
       if (divTables.length > 0) {
         addLog(`Found ${divTables.length} div-based tables, attempting to extract data`, 'info');
         
-        const divData = await this.page.evaluate(() => {
+        const divData = await context.evaluate(() => {
           const divTableSelectors = [
             'div[class*="table"]', 'div[class*="grid"]', 'div[class*="list"]',
             'div.board_list', 'div.tbl_wrap', 'div.data-grid'
@@ -895,7 +989,7 @@ class BaseCrawler {
         }
       }
       
-      const structuredData = await this.page.evaluate(() => {
+      const structuredData = await context.evaluate(() => {
         const dataElements = Array.from(document.querySelectorAll('*'))
           .filter(el => {
             const text = el.textContent.trim();
@@ -981,10 +1075,13 @@ class BaseCrawler {
     try {
       if (!this.site.paginationSelector) return 1;
       
-      const paginationElement = await this.page.$(this.site.paginationSelector);
+      const context = this.currentFrame || this.page;
+      addLog(`Using ${this.currentFrame ? 'iframe' : 'main page'} context for pagination`, 'info');
+      
+      const paginationElement = await context.$(this.site.paginationSelector);
       if (!paginationElement) return 1;
       
-      const totalPages = await this.page.evaluate((selector) => {
+      const totalPages = await context.evaluate((selector) => {
         const pagination = document.querySelector(selector);
         if (!pagination) return 1;
         
@@ -1014,7 +1111,9 @@ class BaseCrawler {
     try {
       if (!this.site.paginationSelector) return false;
       
-      const clicked = await this.page.evaluate((pageNumber, selector) => {
+      const context = this.currentFrame || this.page;
+      
+      const clicked = await context.evaluate((pageNumber, selector) => {
         const pagination = document.querySelector(selector);
         if (!pagination) return false;
         
@@ -1071,6 +1170,7 @@ class BaseCrawler {
       }
       
       addLog(`Extracting table data for ${this.site.name}`, 'info');
+      this.currentFrame = null;
       const data = await this.extractTableData();
       addLog(`Extracted ${data.length} records for ${this.site.name}`, 'success');
       
