@@ -510,12 +510,21 @@ class BaseCrawler {
    */
   async extractTableData() {
     try {
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_before_table_extraction.png` });
+      
+      const pageHtml = await this.page.content();
+      addLog(`Page HTML length: ${pageHtml.length} characters`, 'debug');
+      
+      let tableFound = false;
       try {
-        await this.page.waitForSelector(this.site.tableSelector, { timeout: 15000 });
+        await this.page.waitForSelector(this.site.tableSelector, { timeout: 5000 });
         addLog(`Found results table with selector: ${this.site.tableSelector}`, 'success');
+        tableFound = true;
       } catch (tableError) {
         addLog(`Table not found with primary selector ${this.site.tableSelector}: ${tableError.message}`, 'warning');
-        
+      }
+      
+      if (!tableFound) {
         const tables = await this.page.$$('table');
         if (tables.length > 0) {
           addLog(`Found ${tables.length} tables on page, using first one`, 'info');
@@ -524,30 +533,129 @@ class BaseCrawler {
           
           const tableHtml = await this.page.evaluate(table => table.outerHTML, tables[0]);
           addLog(`First table HTML: ${tableHtml.substring(0, 200)}...`, 'debug');
-        } else {
-          const divTables = await this.page.$$('div[class*="table"], div[class*="grid"], div[class*="list"]');
+          tableFound = true;
+        }
+      }
+      
+      if (!tableFound) {
+        const divSelectors = [
+          'div[class*="table"]', 'div[class*="grid"]', 'div[class*="list"]',
+          'div.board_list', 'div.tbl_wrap', 'div.data-grid', 
+          'div.list_table', 'div[class*="board"]'
+        ];
+        
+        for (const selector of divSelectors) {
+          const divTables = await this.page.$$(selector);
           if (divTables.length > 0) {
-            addLog(`Found ${divTables.length} div-based tables on page, using first one`, 'info');
-          } else {
-            addLog(`No tables or table-like elements found on page`, 'error');
-            
-            await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_no_tables_found.png` });
-            
-            const pageHtml = await this.page.content();
-            addLog(`Page HTML length: ${pageHtml.length} characters`, 'debug');
-            
-            throw new Error('No results table found');
+            addLog(`Found ${divTables.length} div-based tables with selector ${selector}, using first one`, 'info');
+            tableFound = true;
+            break;
           }
+        }
+      }
+      
+      if (!tableFound) {
+        const structuredContent = await this.page.evaluate(() => {
+          const potentialContainers = Array.from(document.querySelectorAll('div, ul, ol, section'))
+            .filter(el => el.children.length > 5)
+            .map(el => ({
+              tagName: el.tagName,
+              id: el.id || '',
+              className: el.className || '',
+              childCount: el.children.length,
+              firstChildHTML: el.children[0]?.outerHTML?.substring(0, 100) || ''
+            }));
+          
+          return potentialContainers;
+        });
+        
+        if (structuredContent.length > 0) {
+          addLog(`Found ${structuredContent.length} potential structured content containers`, 'info');
+          addLog(`First container: ${JSON.stringify(structuredContent[0])}`, 'debug');
+          tableFound = true;
+        }
+      }
+      
+      if (!tableFound) {
+        const textContent = await this.page.evaluate(() => {
+          const contentElements = document.querySelectorAll('#content, .content, main, .main, #main');
+          if (contentElements.length > 0) {
+            return {
+              found: true,
+              text: contentElements[0].textContent.trim().substring(0, 500),
+              html: contentElements[0].innerHTML.substring(0, 500)
+            };
+          }
+          return { found: false };
+        });
+        
+        if (textContent.found) {
+          addLog(`Found text content that might contain data`, 'info');
+          addLog(`Content sample: ${textContent.text.substring(0, 200)}...`, 'debug');
+          tableFound = true;
+        }
+      }
+      
+      if (!tableFound) {
+        const elementsWithNumbers = await this.page.evaluate(() => {
+          const elements = Array.from(document.querySelectorAll('*'))
+            .filter(el => {
+              const text = el.textContent.trim();
+              return /\d{3,}/.test(text) || // Contains at least 3 digits together
+                     /\d+,\d+/.test(text) || // Contains numbers with commas
+                     /\d+\.\d+/.test(text); // Contains decimal numbers
+            })
+            .slice(0, 10) // Limit to first 10 matches
+            .map(el => ({
+              tagName: el.tagName,
+              text: el.textContent.trim().substring(0, 50),
+              parent: el.parentElement ? {
+                tagName: el.parentElement.tagName,
+                className: el.parentElement.className || ''
+              } : null
+            }));
+          
+          return elements;
+        });
+        
+        if (elementsWithNumbers.length > 0) {
+          addLog(`Found ${elementsWithNumbers.length} elements containing numbers that might be data`, 'info');
+          addLog(`First element: ${JSON.stringify(elementsWithNumbers[0])}`, 'debug');
+          tableFound = true;
+        } else {
+          await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_no_data_found.png` });
+          addLog(`No data elements found on page`, 'error');
         }
       }
       
       const data = await this.extractCurrentPageData();
       let allData = [...data];
       
-      const hasPagination = await this.page.$(this.site.paginationSelector) !== null;
+      const hasPagination = await this.page.evaluate((selector) => {
+        if (selector && document.querySelector(selector)) {
+          return true;
+        }
+        
+        const paginationSelectors = [
+          '.pagination', '.paging', '.page-navigation', 
+          'ul.pages', 'div.pages', 'nav.pagination',
+          'a.page-link', 'a[href*="page="]'
+        ];
+        
+        for (const sel of paginationSelectors) {
+          if (document.querySelector(sel)) {
+            return true;
+          }
+        }
+        
+        const pageLinks = Array.from(document.querySelectorAll('a'))
+          .filter(a => /^\d+$/.test(a.textContent.trim()));
+        
+        return pageLinks.length > 1;
+      }, this.site.paginationSelector);
       
       if (hasPagination) {
-        addLog(`Found pagination with selector: ${this.site.paginationSelector}`, 'info');
+        addLog(`Found pagination on page`, 'info');
         const totalPages = await this.getTotalPages();
         addLog(`Total pages found: ${totalPages}`, 'info');
         
@@ -559,7 +667,7 @@ class BaseCrawler {
           allData = [...allData, ...pageData];
         }
       } else {
-        addLog(`No pagination found with selector: ${this.site.paginationSelector}`, 'info');
+        addLog(`No pagination found on page`, 'info');
       }
       
       addLog(`Total records extracted: ${allData.length}`, 'success');
@@ -576,135 +684,291 @@ class BaseCrawler {
    */
   async extractCurrentPageData() {
     try {
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_before_data_extraction.png` });
+      
       const tables = await this.page.$$('table');
       
-      if (tables.length === 0) {
-        addLog('No tables found on page for data extraction', 'warning');
-        return [];
-      }
-      
-      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_table_data.png` });
-      
-      let tableIndex = 0;
-      
-      if (tables.length > 1) {
-        const tableSizes = await this.page.evaluate(() => {
-          return Array.from(document.querySelectorAll('table')).map((table, index) => {
-            const rows = table.querySelectorAll('tr').length;
-            const headers = Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td'))
-              .map(cell => cell.textContent.trim().toLowerCase());
-            
-            const hasRelevantHeaders = headers.some(header => 
-              header.includes('id') || 
-              header.includes('title') || 
-              header.includes('revenue') || 
-              header.includes('views') ||
-              header.includes('정산') ||
-              header.includes('수익') ||
-              header.includes('조회')
-            );
-            
-            return { index, rows, hasRelevantHeaders };
-          });
-        });
+      if (tables.length > 0) {
+        addLog(`Found ${tables.length} standard HTML tables for data extraction`, 'info');
         
-        const relevantTables = tableSizes.filter(t => t.hasRelevantHeaders);
-        if (relevantTables.length > 0) {
-          tableIndex = relevantTables.sort((a, b) => b.rows - a.rows)[0].index;
-          addLog(`Selected table ${tableIndex} with relevant headers and ${tableSizes[tableIndex].rows} rows`, 'info');
-        } else {
-          tableIndex = tableSizes.sort((a, b) => b.rows - a.rows)[0].index;
-          addLog(`Selected table ${tableIndex} with most rows (${tableSizes[tableIndex].rows})`, 'info');
+        let tableIndex = 0;
+        
+        if (tables.length > 1) {
+          const tableSizes = await this.page.evaluate(() => {
+            return Array.from(document.querySelectorAll('table')).map((table, index) => {
+              const rows = table.querySelectorAll('tr').length;
+              const headers = Array.from(table.querySelectorAll('tr:first-child th, tr:first-child td'))
+                .map(cell => cell.textContent.trim().toLowerCase());
+              
+              const hasRelevantHeaders = headers.some(header => 
+                header.includes('id') || 
+                header.includes('title') || 
+                header.includes('revenue') || 
+                header.includes('views') ||
+                header.includes('정산') ||
+                header.includes('수익') ||
+                header.includes('조회') ||
+                header.includes('금액') ||
+                header.includes('콘텐츠')
+              );
+              
+              return { index, rows, hasRelevantHeaders, headers };
+            });
+          });
+          
+          addLog(`Table analysis: ${JSON.stringify(tableSizes)}`, 'debug');
+          
+          const relevantTables = tableSizes.filter(t => t.hasRelevantHeaders);
+          if (relevantTables.length > 0) {
+            tableIndex = relevantTables.sort((a, b) => b.rows - a.rows)[0].index;
+            addLog(`Selected table ${tableIndex} with relevant headers and ${tableSizes[tableIndex].rows} rows`, 'info');
+          } else {
+            tableIndex = tableSizes.sort((a, b) => b.rows - a.rows)[0].index;
+            addLog(`Selected table ${tableIndex} with most rows (${tableSizes[tableIndex].rows})`, 'info');
+          }
+        }
+        
+        const data = await this.page.evaluate((tableIndex) => {
+          const table = document.querySelectorAll('table')[tableIndex];
+          if (!table) return [];
+          
+          const rows = Array.from(table.querySelectorAll('tr'));
+          if (rows.length <= 1) return []; // Only header row or empty table
+          
+          const headerRow = rows[0];
+          const headers = Array.from(headerRow.querySelectorAll('th, td')).map(cell => cell.textContent.trim());
+          
+          const dataRows = rows.slice(1); // Skip header row
+          
+          return dataRows.map(row => {
+            const cells = Array.from(row.querySelectorAll('td'));
+            const rowData = cells.map(cell => cell.textContent.trim());
+            
+            if (headers.length > 0 && headers.length === rowData.length) {
+              const rawData = headers.reduce((obj, header, index) => {
+                obj[header] = rowData[index];
+                return obj;
+              }, {});
+              
+              const mappedData = {
+                rawData: rawData,
+                settlementDate: new Date().toISOString().split('T')[0] // Default to today
+              };
+              
+              headers.forEach((header, index) => {
+                const headerLower = header.toLowerCase();
+                const value = rowData[index];
+                
+                if (headerLower.includes('id') || headerLower.includes('번호') || headerLower.includes('코드')) {
+                  mappedData.contentId = value;
+                }
+                
+                else if (headerLower.includes('title') || headerLower.includes('제목') || 
+                        headerLower.includes('name') || headerLower.includes('이름') ||
+                        headerLower.includes('콘텐츠')) {
+                  mappedData.contentTitle = value;
+                }
+                
+                else if (headerLower.includes('type') || headerLower.includes('종류') || 
+                        headerLower.includes('category') || headerLower.includes('카테고리')) {
+                  mappedData.contentType = value;
+                }
+                
+                else if (headerLower.includes('view') || headerLower.includes('조회') || 
+                        headerLower.includes('count') || headerLower.includes('횟수')) {
+                  mappedData.views = parseInt(value.replace(/[^0-9]/g, '')) || 0;
+                }
+                
+                else if (headerLower.includes('revenue') || headerLower.includes('수익') || 
+                        headerLower.includes('amount') || headerLower.includes('금액') ||
+                        headerLower.includes('정산')) {
+                  mappedData.revenue = parseFloat(value.replace(/[^0-9.]/g, '')) || 0;
+                }
+                
+                else if (headerLower.includes('date') || headerLower.includes('날짜')) {
+                  try {
+                    const dateMatch = value.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}/);
+                    if (dateMatch) {
+                      mappedData.settlementDate = dateMatch[0].replace(/\//g, '-');
+                    }
+                  } catch (e) {
+                  }
+                }
+              });
+              
+              return mappedData;
+            }
+            
+            return { 
+              rawData: rowData,
+              settlementDate: new Date().toISOString().split('T')[0]
+            };
+          });
+        }, tableIndex);
+        
+        if (data.length > 0) {
+          addLog(`Extracted ${data.length} rows of data from table`, 'success');
+          addLog(`Sample data: ${JSON.stringify(data[0]).substring(0, 200)}...`, 'debug');
+          return data;
         }
       }
       
-      const data = await this.page.evaluate((tableIndex) => {
-        const table = document.querySelectorAll('table')[tableIndex];
-        if (!table) return [];
+      const divTables = await this.page.$$('div[class*="table"], div[class*="grid"], div[class*="list"], div.board_list, div.tbl_wrap');
+      
+      if (divTables.length > 0) {
+        addLog(`Found ${divTables.length} div-based tables, attempting to extract data`, 'info');
         
-        const rows = Array.from(table.querySelectorAll('tr'));
-        if (rows.length <= 1) return []; // Only header row or empty table
-        
-        const headerRow = rows[0];
-        const headers = Array.from(headerRow.querySelectorAll('th, td')).map(cell => cell.textContent.trim());
-        
-        const dataRows = rows.slice(1); // Skip header row
-        
-        return dataRows.map(row => {
-          const cells = Array.from(row.querySelectorAll('td'));
-          const rowData = cells.map(cell => cell.textContent.trim());
+        const divData = await this.page.evaluate(() => {
+          const divTableSelectors = [
+            'div[class*="table"]', 'div[class*="grid"]', 'div[class*="list"]',
+            'div.board_list', 'div.tbl_wrap', 'div.data-grid'
+          ];
           
-          if (headers.length > 0 && headers.length === rowData.length) {
-            const rawData = headers.reduce((obj, header, index) => {
-              obj[header] = rowData[index];
-              return obj;
-            }, {});
+          let dataRows = [];
+          
+          for (const selector of divTableSelectors) {
+            const containers = document.querySelectorAll(selector);
             
-            const mappedData = {
-              rawData: rawData,
-              settlementDate: new Date().toISOString().split('T')[0] // Default to today
-            };
-            
-            headers.forEach((header, index) => {
-              const headerLower = header.toLowerCase();
-              const value = rowData[index];
+            for (const container of containers) {
+              const rowElements = container.querySelectorAll('div[class*="row"], div[class*="item"], li');
               
-              if (headerLower.includes('id') || headerLower.includes('번호') || headerLower.includes('코드')) {
-                mappedData.contentId = value;
-              }
-              
-              else if (headerLower.includes('title') || headerLower.includes('제목') || 
-                      headerLower.includes('name') || headerLower.includes('이름') ||
-                      headerLower.includes('콘텐츠')) {
-                mappedData.contentTitle = value;
-              }
-              
-              else if (headerLower.includes('type') || headerLower.includes('종류') || 
-                      headerLower.includes('category') || headerLower.includes('카테고리')) {
-                mappedData.contentType = value;
-              }
-              
-              else if (headerLower.includes('view') || headerLower.includes('조회') || 
-                      headerLower.includes('count') || headerLower.includes('횟수')) {
-                mappedData.views = parseInt(value.replace(/[^0-9]/g, '')) || 0;
-              }
-              
-              else if (headerLower.includes('revenue') || headerLower.includes('수익') || 
-                      headerLower.includes('amount') || headerLower.includes('금액') ||
-                      headerLower.includes('정산')) {
-                mappedData.revenue = parseFloat(value.replace(/[^0-9.]/g, '')) || 0;
-              }
-              
-              else if (headerLower.includes('date') || headerLower.includes('날짜')) {
-                try {
-                  const dateMatch = value.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}/);
-                  if (dateMatch) {
-                    mappedData.settlementDate = dateMatch[0].replace(/\//g, '-');
+              if (rowElements.length > 1) {
+                const headerRow = rowElements[0];
+                const headerCells = headerRow.querySelectorAll('div, span');
+                const headers = Array.from(headerCells).map(cell => cell.textContent.trim());
+                
+                const rows = Array.from(rowElements).slice(1);
+                
+                const rowsData = rows.map(row => {
+                  const cells = row.querySelectorAll('div, span');
+                  const values = Array.from(cells).map(cell => cell.textContent.trim());
+                  
+                  const rawData = {};
+                  if (headers.length === values.length) {
+                    headers.forEach((header, i) => {
+                      rawData[header] = values[i];
+                    });
+                  } else {
+                    values.forEach((value, i) => {
+                      rawData[`column${i}`] = value;
+                    });
                   }
-                } catch (e) {
+                  
+                  const mappedData = {
+                    rawData: rawData,
+                    settlementDate: new Date().toISOString().split('T')[0]
+                  };
+                  
+                  const idValue = values.find(v => /^\d+$/.test(v.trim()));
+                  if (idValue) mappedData.contentId = idValue;
+                  
+                  const titleValue = values.reduce((longest, current) => 
+                    current.length > longest.length ? current : longest, '');
+                  if (titleValue.length > 5) mappedData.contentTitle = titleValue;
+                  
+                  const viewValue = values.find(v => /^[\d,]+$/.test(v.trim()));
+                  if (viewValue) mappedData.views = parseInt(viewValue.replace(/[^0-9]/g, '')) || 0;
+                  
+                  const revenueValue = values.find(v => /[\d,]+(\.\d+)?/.test(v.trim()) && v !== viewValue);
+                  if (revenueValue) mappedData.revenue = parseFloat(revenueValue.replace(/[^0-9.]/g, '')) || 0;
+                  
+                  return mappedData;
+                });
+                
+                if (rowsData.length > 0) {
+                  dataRows = [...dataRows, ...rowsData];
+                  break;
                 }
               }
-            });
+            }
             
-            return mappedData;
+            if (dataRows.length > 0) break;
           }
           
-          return { 
-            rawData: rowData,
-            settlementDate: new Date().toISOString().split('T')[0]
-          };
+          return dataRows;
         });
-      }, tableIndex);
-      
-      addLog(`Extracted ${data.length} rows of data from table`, 'success');
-      
-      if (data.length > 0) {
-        addLog(`Sample data: ${JSON.stringify(data[0]).substring(0, 200)}...`, 'debug');
+        
+        if (divData.length > 0) {
+          addLog(`Extracted ${divData.length} rows of data from div-based table`, 'success');
+          addLog(`Sample div data: ${JSON.stringify(divData[0]).substring(0, 200)}...`, 'debug');
+          return divData;
+        }
       }
       
-      return data;
+      const structuredData = await this.page.evaluate(() => {
+        const dataElements = Array.from(document.querySelectorAll('*'))
+          .filter(el => {
+            const text = el.textContent.trim();
+            return /\d{3,}/.test(text) || // Contains at least 3 digits together
+                   /\d+,\d+/.test(text) || // Contains numbers with commas
+                   /\d+\.\d+/.test(text); // Contains decimal numbers
+          });
+        
+        if (dataElements.length === 0) return [];
+        
+        const parentMap = new Map();
+        
+        dataElements.forEach(el => {
+          const parent = el.parentElement;
+          if (parent) {
+            if (!parentMap.has(parent)) {
+              parentMap.set(parent, []);
+            }
+            parentMap.get(parent).push(el);
+          }
+        });
+        
+        const potentialRows = Array.from(parentMap.entries())
+          .filter(([_, children]) => children.length >= 2)
+          .map(([parent, _]) => parent);
+        
+        if (potentialRows.length === 0) return [];
+        
+        return potentialRows.map(row => {
+          const textNodes = Array.from(row.childNodes)
+            .filter(node => node.nodeType === 3 || node.nodeType === 1)
+            .map(node => node.textContent.trim())
+            .filter(text => text.length > 0);
+          
+          const rawData = {};
+          textNodes.forEach((text, i) => {
+            rawData[`field${i}`] = text;
+          });
+          
+          const mappedData = {
+            rawData: rawData,
+            settlementDate: new Date().toISOString().split('T')[0]
+          };
+          
+          const idValue = textNodes.find(v => /^\d+$/.test(v.trim()));
+          if (idValue) mappedData.contentId = idValue;
+          
+          const titleValue = textNodes.reduce((longest, current) => 
+            current.length > longest.length ? current : longest, '');
+          if (titleValue.length > 5) mappedData.contentTitle = titleValue;
+          
+          const viewValue = textNodes.find(v => /^[\d,]+$/.test(v.trim()));
+          if (viewValue) mappedData.views = parseInt(viewValue.replace(/[^0-9]/g, '')) || 0;
+          
+          const revenueValue = textNodes.find(v => /[\d,]+(\.\d+)?/.test(v.trim()) && v !== viewValue);
+          if (revenueValue) mappedData.revenue = parseFloat(revenueValue.replace(/[^0-9.]/g, '')) || 0;
+          
+          return mappedData;
+        });
+      });
+      
+      if (structuredData.length > 0) {
+        addLog(`Extracted ${structuredData.length} rows of data from structured content`, 'success');
+        addLog(`Sample structured data: ${JSON.stringify(structuredData[0]).substring(0, 200)}...`, 'debug');
+        return structuredData;
+      }
+      
+      addLog('Could not extract any data from the page', 'warning');
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_no_data_extracted.png` });
+      return [];
     } catch (error) {
       addLog(`Error extracting data from current page: ${error.message}`, 'error');
+      await this.page.screenshot({ path: `/tmp/${this.site.name.replace(/\s+/g, '_')}_data_extraction_error.png` });
       return [];
     }
   }
