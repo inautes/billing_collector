@@ -1,15 +1,15 @@
 # Settlement Crawler
 
-A Node.js application for crawling settlement data from multiple websites, extracting information, and storing it in a PostgreSQL database.
+A Node.js application for crawling settlement data from Filesun website with multiple login credentials, extracting information, and storing it in a PostgreSQL database.
 
 ## Features
 
-- Automatic login to settlement data websites
+- Automatic login to Filesun website with multiple credentials
 - Navigation to settlement management pages
 - Date selection and data extraction
 - Storage of settlement data in PostgreSQL database
 - Admin interface for managing sites and running crawlers
-- Extensible architecture for adding new sites
+- Extensible architecture for adding more login credentials
 
 ## Tech Stack
 

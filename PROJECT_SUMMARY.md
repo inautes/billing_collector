@@ -2,16 +2,16 @@
 
 ## Overview
 
-The Settlement Crawler is a Node.js application designed to automate the process of collecting settlement data from multiple websites. It uses Puppeteer for web scraping, Sequelize ORM for database operations, and follows the MVC architecture pattern.
+The Settlement Crawler is a Node.js application designed to automate the process of collecting settlement data from the Filesun website using multiple login credentials. It uses Puppeteer for web scraping, Sequelize ORM for database operations, and follows the MVC architecture pattern.
 
 ## Key Features
 
-1. **Multi-site Crawling**: Supports crawling multiple settlement data websites with different structures
-2. **Automatic Login**: Handles authentication for each site using stored credentials
+1. **Multiple Credential Crawling**: Supports crawling the Filesun website with different login credentials
+2. **Automatic Login**: Handles authentication for each credential using stored information
 3. **Data Extraction**: Navigates to settlement pages, sets date filters, and extracts data from tables
 4. **Database Storage**: Stores extracted data in a structured database for analysis
-5. **Admin Interface**: Web-based interface for managing sites and running crawlers
-6. **Extensible Architecture**: Designed to easily add new sites in the future
+5. **Admin Interface**: Web-based interface for managing credentials and running crawlers
+6. **Extensible Architecture**: Designed to easily add new login credentials in the future
 
 ## Technical Implementation
 
@@ -70,28 +70,32 @@ The crawler system uses a base class with common functionality:
    - POST /api/crawler/run-all - Run crawler for all active sites
    - GET /api/crawler/status - Get crawler status
 
-## Sample Sites
+## Sample Login Credentials
 
-The system is pre-configured with the following sample sites:
+The system is pre-configured with the following login credentials for the Filesun website:
 
-1. **파일썬** (Filesun)
+1. **파일썬 - JAYE**
    - URL: https://copyright.filesun.com
    - Username: jaye
    - Password: jaye1234!
 
-2. **CU미디어** (CU Media)
+2. **파일썬 - CU미디어**
+   - URL: https://copyright.filesun.com
    - Username: jayecu
    - Password: jaye1234!
 
-3. **채널A** (Channel A)
+3. **파일썬 - 채널A**
+   - URL: https://copyright.filesun.com
    - Username: jayecha
    - Password: jaye1234!
 
-4. **TV조선** (TV Choson)
+4. **파일썬 - TV조선**
+   - URL: https://copyright.filesun.com
    - Username: jayetvcs
    - Password: jaye1234!
 
-5. **MBN**
+5. **파일썬 - MBN**
+   - URL: https://copyright.filesun.com
    - Username: jayembn
    - Password: jaye1234!
 

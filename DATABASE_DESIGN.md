@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the database design for the Settlement Crawler application. The application is designed to crawl multiple settlement data websites, extract data, and store it in a PostgreSQL database using Sequelize ORM.
+This document outlines the database design for the Settlement Crawler application. The application is currently designed to crawl the Filesun website with multiple login credentials, but is structured to accommodate additional websites in the future. It extracts settlement data and stores it in a PostgreSQL database using Sequelize ORM.
 
 ## Database Schema
 
